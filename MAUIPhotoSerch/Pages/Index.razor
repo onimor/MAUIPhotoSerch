@@ -1,0 +1,248 @@
+﻿@page "/"
+@using MAUIPhotoSerch.Data
+@using Microsoft.EntityFrameworkCore
+
+@if(processing)
+{
+    <h3>Ищем секундочку..</h3>
+}
+else
+{
+    @if (images.Count > 0)
+    {
+        foreach (var image in images)
+        {
+            <h1>@image.Name</h1>
+        }
+    }
+    else
+    {
+        <h1>Не найдено</h1>
+    }
+}
+
+@code {
+    private List<string> patchs = new()
+    {
+         #if WINDOWS
+         Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), 
+     Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+         #elif ANDROID
+
+     Android.OS.Environment.GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryDcim).Path,  
+         #endif
+    };
+
+    private readonly HashSet<string> filterList = new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".png", ".gif", ".jpeg" };
+    private List<ImageEF> images = new();
+    private bool processing = false;
+    private List<FileSystemWatcher> watchers = new List<FileSystemWatcher>();
+    protected override async Task OnInitializedAsync()
+    {
+        using var imageDBContex = new ImagesDBContex();
+        await imageDBContex.Database.EnsureCreatedAsync();
+        processing = true;
+        try
+        {
+            await LoadImages();
+            processing = false;
+            StateHasChanged();
+            SubscrabeNotifi();
+            await CheckDeletImages();
+            await CheckNewImages();
+        }
+        catch
+        {
+
+        }
+        processing = false;
+    }
+    private void SubscrabeNotifi()
+    {
+        foreach (var filter in filterList)
+        {
+            foreach (string patch in patchs)
+            {
+                var watcher = new FileSystemWatcher(patch);
+
+                watcher.NotifyFilter = NotifyFilters.Attributes
+                                     | NotifyFilters.CreationTime
+                                     | NotifyFilters.DirectoryName
+                                     | NotifyFilters.FileName
+                                     | NotifyFilters.LastAccess
+                                     | NotifyFilters.LastWrite
+                                     | NotifyFilters.Security
+                                     | NotifyFilters.Size;
+                watcher.Changed += OnChanged;
+                watcher.Created += OnCreated;
+                watcher.Deleted += OnDeleted;
+                watcher.Renamed += OnRenamed;
+
+                watcher.Filter = $"*{filter}";
+                watcher.IncludeSubdirectories = true;
+                watcher.EnableRaisingEvents = true;
+                watchers.Add(watcher);
+            }
+        }
+    }
+    private async void OnChanged(object sender, FileSystemEventArgs e)
+    {
+        if (e.ChangeType != WatcherChangeTypes.Changed)
+        {
+            return;
+        }
+        Console.WriteLine($"Changed: {e.FullPath}"); 
+    }
+
+    private async void OnCreated(object sender, FileSystemEventArgs e)
+    {
+        string value = $"Created: {e.FullPath}";
+        Console.WriteLine(value);
+        using var imageDBContex = new ImagesDBContex();
+        var imagePatch = e.FullPath;
+        var name = Path.GetFileName(imagePatch);
+        var dateChange = File.GetLastWriteTime(imagePatch);
+        var image = images.FirstOrDefault(x => x.Patch == imagePatch && x.Name == name);
+        if (image is null)
+        {
+            var newImage = new ImageEF
+                {
+                    DateChange = dateChange,
+                    Name = name,
+                    Patch = imagePatch
+                };
+            images.Add(newImage);
+            await imageDBContex.Images.AddAsync(newImage);
+
+        }
+        else
+        {
+            if (image.DateChange != dateChange)
+            {
+                image.DateChange = dateChange;
+            }
+        }
+        images = images.OrderByDescending(x => x.DateChange).ToList();
+        await InvokeAsync(()=> StateHasChanged());
+        await imageDBContex.SaveChangesAsync();
+    }
+
+    private async void OnDeleted(object sender, FileSystemEventArgs e)
+    {
+        Console.WriteLine($"Deleted: {e.FullPath}");
+        using var imageDBContex = new ImagesDBContex();
+        var imagePatch = e.FullPath;
+        var name = Path.GetFileName(imagePatch);
+        var dateChange = File.GetLastWriteTime(imagePatch);
+        var image = images.FirstOrDefault(x => x.Patch == imagePatch && x.Name == name);
+        if (image is not null) 
+        {
+            images.Remove(image);
+            imageDBContex.Images.Remove(image);
+        } 
+        await InvokeAsync(() => StateHasChanged());
+        await imageDBContex.SaveChangesAsync(); 
+    }
+
+    private async void OnRenamed(object sender, RenamedEventArgs e)
+    {
+        Console.WriteLine($"Renamed:");
+        Console.WriteLine($"    Old: {e.OldFullPath}");
+        Console.WriteLine($"    New: {e.FullPath}");
+        using var imageDBContex = new ImagesDBContex();
+        var imagePatch = e.OldFullPath;
+        var name = e.OldName;
+        var dateChange = File.GetLastWriteTime(e.FullPath);
+        var image = images.FirstOrDefault(x => x.Patch == imagePatch && x.Name == name);
+        if(image is not null)
+        {
+            image.Name = e.Name;
+            image.Patch = e.FullPath;
+            image.DateChange = dateChange; 
+            images = images.OrderByDescending(x => x.DateChange).ToList();
+            await InvokeAsync(() => StateHasChanged());
+            imageDBContex.Update(image);
+            await imageDBContex.SaveChangesAsync();
+        }
+
+    }
+    private async Task LoadImages()
+    {
+        using var imageDBContex = new ImagesDBContex();
+        images = await imageDBContex.Images.OrderByDescending(x => x.DateChange).ToListAsync();
+    }
+    private async Task<List<string>> SerchImagesPatchAsync()
+    {
+        List<string> imagesPatch = new();
+        try
+        {
+            await Task.Run(() =>
+            {
+                foreach (string patch in patchs)
+                {
+                    imagesPatch.AddRange(Directory.EnumerateFiles(patch, "*", SearchOption.AllDirectories)
+                    .Where(s => filterList.Contains(Path.GetExtension(s)))); // поиск по шаблону
+                }
+            });
+        }
+        catch(Exception ex)
+        {
+            
+        }
+        return imagesPatch;
+    }
+    private async Task CheckDeletImages()
+    {
+        using var imageDBContex = new ImagesDBContex();
+        List<ImageEF> removeImagesList = new();
+        foreach (var image in images)
+        {
+            if (!File.Exists(image.Patch))
+            {
+                removeImagesList.Add(image);
+            } 
+        } 
+        foreach (var removeImages in removeImagesList)
+        {
+            images.Remove(removeImages);
+            StateHasChanged();
+        }
+        imageDBContex.Images.RemoveRange(removeImagesList);
+        await imageDBContex.SaveChangesAsync(); 
+    }
+    private async Task CheckNewImages()
+    {
+        using var imageDBContex = new ImagesDBContex();
+        var imagePatchs = await SerchImagesPatchAsync(); 
+        foreach (var imagePatch in imagePatchs)
+        {
+            var name = Path.GetFileName(imagePatch);
+            var dateChange = File.GetLastWriteTime(imagePatch);
+            var image = images.FirstOrDefault(x => x.Patch == imagePatch && x.Name == name);
+            if (image is null)
+            {
+                var newImage = new ImageEF
+                    {
+                        DateChange = dateChange,
+                        Name = name,
+                        Patch = imagePatch
+                    };
+                images.Add(newImage);
+                await imageDBContex.Images.AddAsync(newImage); 
+
+            }
+            else
+            {
+                if (image.DateChange != dateChange)
+                {
+                    image.DateChange = dateChange;
+                }
+            }
+            images = images.OrderByDescending(x => x.DateChange).ToList();
+            StateHasChanged();
+            await imageDBContex.SaveChangesAsync();
+        }
+        
+    }
+}
