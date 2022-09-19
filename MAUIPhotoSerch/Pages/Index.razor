@@ -25,16 +25,16 @@ else
     private List<string> patchs = new()
     {
          #if WINDOWS
-         Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), 
-     Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), 
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
          #elif ANDROID
 
-     Android.OS.Environment.GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryDcim).Path,  
+            Android.OS.Environment.GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryDcim).Path,  
          #endif
     };
 
-    private readonly HashSet<string> filterList = new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".png", ".gif", ".jpeg" };
+    private readonly HashSet<string> filterList = new(StringComparer.Ordinal) { ".jpg", ".png", ".gif", ".jpeg" };
     private List<ImageEF> images = new();
     private bool processing = false;
     private List<FileSystemWatcher> watchers = new List<FileSystemWatcher>();
@@ -45,11 +45,16 @@ else
         processing = true;
         try
         {
+            //загружаем из базы что есть
             await LoadImages();
             processing = false;
             StateHasChanged();
+            //Подписываемся на изменения файлов 
+            // !!!!!!!!!НУЖНО СДЕЛАТЬ ОТПИСКУ!!!!!!!!!
             SubscrabeNotifi();
+            //проверяем все ли файлы из базы еще существуют
             await CheckDeletImages();
+            //ищем новые
             await CheckNewImages();
         }
         catch
@@ -58,6 +63,7 @@ else
         }
         processing = false;
     }
+    //подписываемся на изменение папки для каждого формата файла
     private void SubscrabeNotifi()
     {
         foreach (var filter in filterList)
@@ -94,7 +100,7 @@ else
         }
         Console.WriteLine($"Changed: {e.FullPath}"); 
     }
-
+    //событие нового файла
     private async void OnCreated(object sender, FileSystemEventArgs e)
     {
         string value = $"Created: {e.FullPath}";
@@ -127,7 +133,7 @@ else
         await InvokeAsync(()=> StateHasChanged());
         await imageDBContex.SaveChangesAsync();
     }
-
+    //событие удаление
     private async void OnDeleted(object sender, FileSystemEventArgs e)
     {
         Console.WriteLine($"Deleted: {e.FullPath}");
@@ -144,7 +150,7 @@ else
         await InvokeAsync(() => StateHasChanged());
         await imageDBContex.SaveChangesAsync(); 
     }
-
+    //событие переименовывания
     private async void OnRenamed(object sender, RenamedEventArgs e)
     {
         Console.WriteLine($"Renamed:");
@@ -167,11 +173,14 @@ else
         }
 
     }
+
+    //загружаем из базы все что есть
     private async Task LoadImages()
     {
         using var imageDBContex = new ImagesDBContex();
         images = await imageDBContex.Images.OrderByDescending(x => x.DateChange).ToListAsync();
     }
+    //ищем все изображения в папках
     private async Task<List<string>> SerchImagesPatchAsync()
     {
         List<string> imagesPatch = new();
@@ -181,7 +190,7 @@ else
             {
                 foreach (string patch in patchs)
                 {
-                    imagesPatch.AddRange(Directory.EnumerateFiles(patch, "*", SearchOption.AllDirectories)
+                    imagesPatch.AddRange(Directory.EnumerateFiles(patch, "*", SearchOption.TopDirectoryOnly)
                     .Where(s => filterList.Contains(Path.GetExtension(s)))); // поиск по шаблону
                 }
             });
@@ -192,6 +201,8 @@ else
         }
         return imagesPatch;
     }
+
+    //Проверяем вдруг уже каких то фото не существует
     private async Task CheckDeletImages()
     {
         using var imageDBContex = new ImagesDBContex();
@@ -211,6 +222,8 @@ else
         imageDBContex.Images.RemoveRange(removeImagesList);
         await imageDBContex.SaveChangesAsync(); 
     }
+
+    //ищем новые фото
     private async Task CheckNewImages()
     {
         using var imageDBContex = new ImagesDBContex();
