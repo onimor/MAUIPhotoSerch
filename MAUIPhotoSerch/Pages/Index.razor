@@ -1,4 +1,5 @@
 ﻿@page "/"
+@implements IDisposable
 @using MAUIPhotoSerch.Data
 @using Microsoft.EntityFrameworkCore
 
@@ -26,11 +27,12 @@ else
     {
          #if WINDOWS
             Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), 
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
          #elif ANDROID
 
-            Android.OS.Environment.GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryDcim).Path,  
+    Android.OS.Environment.GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryDcim).Path + "/Camera",
+
          #endif
     };
 
@@ -38,10 +40,18 @@ else
     private List<ImageEF> images = new();
     private bool processing = false;
     private List<FileSystemWatcher> watchers = new List<FileSystemWatcher>();
+    private Task CheckDeletImagesThread;
+    private Task CheckNewImagesThread;
+    CancellationTokenSource tokenSource;
     protected override async Task OnInitializedAsync()
     {
+        PermissionStatus statusR = await Permissions.CheckStatusAsync<Permissions.StorageRead>();
+        if (statusR != PermissionStatus.Granted)
+            statusR = await Permissions.RequestAsync<Permissions.StorageRead>();
         using var imageDBContex = new ImagesDBContex();
         await imageDBContex.Database.EnsureCreatedAsync();
+        tokenSource = new CancellationTokenSource();
+        CancellationToken ct = tokenSource.Token;
         processing = true;
         try
         {
@@ -52,10 +62,14 @@ else
             //Подписываемся на изменения файлов 
             // !!!!!!!!!НУЖНО СДЕЛАТЬ ОТПИСКУ!!!!!!!!!
             SubscrabeNotifi();
+            // создаем новый поток
+            CheckDeletImagesThread = new Task(CheckDeletImages, ct);
+            CheckNewImagesThread = new Task(CheckNewImages, ct);
+            // запускаем поток myThread
+            CheckDeletImagesThread.Start();
+            CheckNewImagesThread.Start();
             //проверяем все ли файлы из базы еще существуют
-            await CheckDeletImages();
-            //ищем новые
-            await CheckNewImages();
+
         }
         catch
         {
@@ -183,6 +197,10 @@ else
     //ищем все изображения в папках
     private async Task<List<string>> SerchImagesPatchAsync()
     {
+        //PermissionStatus statusRr = Permissions.RequestAsync<Permissions.StorageRead>().Result;
+
+        //PermissionStatus statusWr = Permissions.RequestAsync<Permissions.StorageWrite>().Result;
+        //PermissionStatus statusW = Permissions.CheckStatusAsync<Permissions.StorageWrite>().Result;
         List<string> imagesPatch = new();
         try
         {
@@ -197,13 +215,13 @@ else
         }
         catch(Exception ex)
         {
-            
+
         }
         return imagesPatch;
     }
 
     //Проверяем вдруг уже каких то фото не существует
-    private async Task CheckDeletImages()
+    private async void CheckDeletImages()
     {
         using var imageDBContex = new ImagesDBContex();
         List<ImageEF> removeImagesList = new();
@@ -217,14 +235,14 @@ else
         foreach (var removeImages in removeImagesList)
         {
             images.Remove(removeImages);
-            StateHasChanged();
+            await InvokeAsync(()=>StateHasChanged());
         }
         imageDBContex.Images.RemoveRange(removeImagesList);
         await imageDBContex.SaveChangesAsync(); 
     }
 
     //ищем новые фото
-    private async Task CheckNewImages()
+    private async void CheckNewImages()
     {
         using var imageDBContex = new ImagesDBContex();
         var imagePatchs = await SerchImagesPatchAsync(); 
@@ -253,9 +271,27 @@ else
                 }
             }
             images = images.OrderByDescending(x => x.DateChange).ToList();
-            StateHasChanged();
+            await InvokeAsync(() => StateHasChanged());
             await imageDBContex.SaveChangesAsync();
         }
-        
+
+    }
+    public void Dispose()
+    {
+        tokenSource.Cancel();
+        tokenSource.Dispose();
+        CheckDeletImagesThread.Dispose();
+        CheckNewImagesThread.Dispose();
+        foreach (var watcher in watchers)
+        {
+            foreach (string patch in patchs)
+            { 
+                watcher.Changed -= OnChanged;
+                watcher.Created -= OnCreated;
+                watcher.Deleted -= OnDeleted;
+                watcher.Renamed -= OnRenamed; 
+
+            }
+        }
     }
 }
