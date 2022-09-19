@@ -62,13 +62,13 @@ else
             //Подписываемся на изменения файлов 
             // !!!!!!!!!НУЖНО СДЕЛАТЬ ОТПИСКУ!!!!!!!!!
             SubscrabeNotifi();
-            // создаем новый поток
+            // создаем таски
             CheckDeletImagesThread = new Task(CheckDeletImages, ct);
             CheckNewImagesThread = new Task(CheckNewImages, ct);
-            // запускаем поток myThread
+            // запускаем их
             CheckDeletImagesThread.Start();
             CheckNewImagesThread.Start();
-            //проверяем все ли файлы из базы еще существуют
+             
 
         }
         catch
@@ -195,23 +195,17 @@ else
         images = await imageDBContex.Images.OrderByDescending(x => x.DateChange).ToListAsync();
     }
     //ищем все изображения в папках
-    private async Task<List<string>> SerchImagesPatchAsync()
+    private List<string> SerchImagesPatchAsync()
     {
-        //PermissionStatus statusRr = Permissions.RequestAsync<Permissions.StorageRead>().Result;
-
-        //PermissionStatus statusWr = Permissions.RequestAsync<Permissions.StorageWrite>().Result;
-        //PermissionStatus statusW = Permissions.CheckStatusAsync<Permissions.StorageWrite>().Result;
         List<string> imagesPatch = new();
         try
         {
-            await Task.Run(() =>
+            foreach (string patch in patchs)
             {
-                foreach (string patch in patchs)
-                {
-                    imagesPatch.AddRange(Directory.EnumerateFiles(patch, "*", SearchOption.TopDirectoryOnly)
-                    .Where(s => filterList.Contains(Path.GetExtension(s)))); // поиск по шаблону
-                }
-            });
+                imagesPatch.AddRange(Directory.EnumerateFiles(patch, "*", SearchOption.TopDirectoryOnly)
+                .Where(s => filterList.Contains(Path.GetExtension(s)))); // поиск по шаблону
+            }
+
         }
         catch(Exception ex)
         {
@@ -245,7 +239,7 @@ else
     private async void CheckNewImages()
     {
         using var imageDBContex = new ImagesDBContex();
-        var imagePatchs = await SerchImagesPatchAsync(); 
+        var imagePatchs = SerchImagesPatchAsync(); 
         foreach (var imagePatch in imagePatchs)
         {
             var name = Path.GetFileName(imagePatch);
@@ -284,14 +278,10 @@ else
         CheckNewImagesThread.Dispose();
         foreach (var watcher in watchers)
         {
-            foreach (string patch in patchs)
-            { 
-                watcher.Changed -= OnChanged;
-                watcher.Created -= OnCreated;
-                watcher.Deleted -= OnDeleted;
-                watcher.Renamed -= OnRenamed; 
-
-            }
+            watcher.Changed -= OnChanged;
+            watcher.Created -= OnCreated;
+            watcher.Deleted -= OnDeleted;
+            watcher.Renamed -= OnRenamed;
         }
     }
 }
