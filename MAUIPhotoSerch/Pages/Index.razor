@@ -64,11 +64,11 @@ else
             SubscrabeNotifi();
             // создаем таски
             CheckDeletImagesThread = new Task(CheckDeletImages, ct);
-            CheckNewImagesThread = new Task(CheckNewImages, ct);
+            CheckNewImagesThread = new Task(SerchNewImages, ct);
             // запускаем их
             CheckDeletImagesThread.Start();
             CheckNewImagesThread.Start();
-             
+
 
         }
         catch
@@ -106,7 +106,7 @@ else
             }
         }
     }
-    private async void OnChanged(object sender, FileSystemEventArgs e)
+    private void OnChanged(object sender, FileSystemEventArgs e)
     {
         if (e.ChangeType != WatcherChangeTypes.Changed)
         {
@@ -226,9 +226,9 @@ else
                 removeImagesList.Add(image);
             } 
         } 
-        foreach (var removeImages in removeImagesList)
+        foreach (var removeImage in removeImagesList)
         {
-            images.Remove(removeImages);
+            images.Remove(removeImage);
             await InvokeAsync(()=>StateHasChanged());
         }
         imageDBContex.Images.RemoveRange(removeImagesList);
@@ -236,7 +236,7 @@ else
     }
 
     //ищем новые фото
-    private async void CheckNewImages()
+    private async void SerchNewImages()
     {
         using var imageDBContex = new ImagesDBContex();
         var imagePatchs = SerchImagesPatchAsync(); 
@@ -282,6 +282,7 @@ else
             watcher.Created -= OnCreated;
             watcher.Deleted -= OnDeleted;
             watcher.Renamed -= OnRenamed;
+            watcher?.Dispose();
         }
     }
 }
